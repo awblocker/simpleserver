@@ -4,7 +4,6 @@ import (
 	"flag"
 	"fmt"
 	"log"
-	"net"
 	"net/http"
 	"time"
 )
@@ -14,7 +13,28 @@ var (
 	dir  = flag.String("dir", ".", "Directory to serve")
 )
 
-func logRequest(t time.Time, r *http.Request) {
+type LoggingResponseWriter struct {
+	writer http.ResponseWriter
+	status int
+	size   int
+}
+
+func (lw *LoggingResponseWriter) Write(b []byte) (int, error) {
+	n, err := lw.writer.Write(b)
+	lw.size += n
+	return n, err
+}
+
+func (lw *LoggingResponseWriter) Header() http.Header {
+	return lw.writer.Header()
+}
+
+func (lw *LoggingResponseWriter) WriteHeader(i int) {
+	lw.status = i
+	lw.writer.WriteHeader(i)
+}
+
+func logHTTP(t time.Time, lw *LoggingResponseWriter, r *http.Request) {
 	// Handling username with "-" default
 	username := "-"
 	if r.URL.User != nil {
@@ -23,26 +43,24 @@ func logRequest(t time.Time, r *http.Request) {
 		}
 	}
 
-	host, _, err := net.SplitHostPort(r.RemoteAddr)
-	if err != nil {
-		host = r.RemoteAddr
-	}
-
-	log.Printf("%s - %s [%s] \"%s %s %s\" - -",
-		host,
+	log.Printf("%s - %s [%s] \"%s %s %s\" %d %d",
+		r.Host,
 		username,
 		t.Format("02/Jan/2006:15:04:05 -0700"),
 		r.Method,
 		r.URL.RequestURI(),
 		r.Proto,
+		lw.status,
+		lw.size,
 	)
 }
 
 func Log(h http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		lw := &LoggingResponseWriter{writer: w}
 		t := time.Now()
-		logRequest(t, r)
-		h.ServeHTTP(w, r)
+		defer logHTTP(t, lw, r)
+		h.ServeHTTP(lw, r)
 	})
 }
 
